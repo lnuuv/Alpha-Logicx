@@ -1,0 +1,9 @@
+# Render Blueprint — Static Site (no server needed).
+# The whole app runs in the browser: /api/* is handled client-side inside index.html.
+services:
+  - type: web
+    name: biy-tech
+    runtime: static
+    buildCommand: echo "static site - nothing to build"
+    staticPublishPath: ./public
+    pullRequestPreviewsEnabled: false
