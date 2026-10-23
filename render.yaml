@@ -1,9 +1,8 @@
-# Render Blueprint — Static Site (no server needed).
-# The whole app runs in the browser: /api/* is handled client-side inside index.html.
+# Render Blueprint — static site; the app runs in the browser.
 services:
   - type: web
-    name: biy-tech
+    name: alpha-logicx
     runtime: static
-    buildCommand: echo "static site - nothing to build"
-    staticPublishPath: ./public
+    buildCommand: echo "No build required"
+    staticPublishPath: .
     pullRequestPreviewsEnabled: false
