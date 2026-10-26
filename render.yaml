@@ -1,8 +1,15 @@
-# Render Blueprint — static site; the app runs in the browser.
 services:
   - type: web
     name: alpha-logicx
-    runtime: static
-    buildCommand: echo "No build required"
-    staticPublishPath: .
-    pullRequestPreviewsEnabled: false
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
