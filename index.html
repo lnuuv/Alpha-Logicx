@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='8 6 1000 1000'><defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='42' y1='825' x2='974' y2='400'><stop offset='0' stop-color='%2300f0ff'/><stop offset='.5' stop-color='%235b8bff'/><stop offset='1' stop-color='%238a24ff'/></linearGradient></defs><path fill='url(%23g)' d='M460 188L940 825H760L466 432L350 611H557L487 713H288L214 825H42Z'/><path fill='url(%23g)' d='M790 321H974L780 578L689 455Z'/></svg>">
   <script id="alx-key-loader">
 /* الذكاء الاصطناعي يعمل عبر السيرفر: المفتاح محفوظ في متغير البيئة GEMINI_API_KEY على Render ولا يصل للمتصفح أبداً.
-   أي طلب إلى generativelanguage.googleapis.com يُحوَّل تلقائياً إلى /_gemini/ على نفس الموقع. */
+   Any request to generativelanguage.googleapis.com is routed to /api/gemini/ on this site. */
 (function () {
   function install(w, base) {
     if (w.__alxGeminiPatched) return; w.__alxGeminiPatched = true;
@@ -27,7 +27,7 @@
       return orig(input, init);
     };
   }
-  var base = (window.ALX_API_BASE || (location.protocol.indexOf("http") === 0 ? location.origin : "")) + "/_gemini";
+  var base = (window.ALX_API_BASE || (location.protocol.indexOf("http") === 0 ? location.origin : "")) + "/api/gemini";
   window.GEMINI_API_KEY = "server-managed"; /* قيمة شكلية فقط حتى لا تطلب الواجهة مفتاحاً */
   try { ["gemini-key", "u1.geminiKey"].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {}
   install(window, base);
@@ -7586,11 +7586,9 @@ const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // النماذج تُجرَّب بالترتيب إذا كان النموذج غير متاح أو مشغولاً
 const fallbackModels = [
-  "gemini-3.8-flash",
-  "gemini-flash-latest",
-  "gemini-3.6-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-3-flash-preview"
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash"
 ];
 
 const aiPanel = document.getElementById("ai-panel");
@@ -7610,7 +7608,7 @@ const storage = {
 // نتجاهل أي نموذج gemini-2 محفوظ سابقاً لأنه أُوقف
 const savedModel = storage.get("gemini-model") || "";
 aiKeyInput.value = GEMINI_KEY;
-aiModelInput.value = /gemini-2/.test(savedModel) ? "gemini-3.8-flash" : (savedModel || "gemini-3.8-flash");
+aiModelInput.value = savedModel || "gemini-2.5-flash";
 
 function addBubble(text, type) {
   const bubble = document.createElement("div");
@@ -7717,8 +7715,8 @@ async function askGemini(contents, systemText, options = {}) {
     return null;
   }
 
-  const first = fast ? ["gemini-3.1-flash-lite"] : [];
-  const models = [...new Set([...first, aiModelInput.value.trim(), ...fallbackModels])].filter(m => m && !/gemini-2/.test(m));
+  const first = fast ? ["gemini-2.5-flash-lite"] : [];
+  const models = [...new Set([...first, aiModelInput.value.trim(), ...fallbackModels])].filter(Boolean);
   let result = await tryModels(models, 2);
 
   // آخر محاولة: نسأل Google عن النماذج المتاحة فعلاً لهذا المفتاح
@@ -7727,7 +7725,7 @@ async function askGemini(contents, systemText, options = {}) {
       const listResponse = await fetch(`${GEMINI_API}?pageSize=100`, { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(10000) });
       const list = await listResponse.json();
       const extra = (list.models || [])
-        .filter(m => /flash/.test(m.name) && !/image|tts|live|audio|embed|gemini-2/.test(m.name))
+        .filter(m => /flash/.test(m.name) && !/image|tts|live|audio|embed/i.test(m.name))
         .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
         .map(m => m.name.replace("models/", ""))
         .filter(name => !models.includes(name))
