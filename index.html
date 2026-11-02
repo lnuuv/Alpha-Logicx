@@ -18,9 +18,12 @@
         var url = typeof input === "string" ? input : (input && input.url) || "";
         if (RE.test(url)) {
           var o = init ? Object.assign({}, init) : {};
-          if (o.headers && !(o.headers instanceof w.Headers)) {
-            var h = Object.assign({}, o.headers); delete h["x-goog-api-key"]; delete h["X-Goog-Api-Key"]; o.headers = h;
-          }
+          var h = new w.Headers(o.headers || {});
+          h.delete("x-goog-api-key");
+          var token = "";
+          try { token = JSON.parse(w.localStorage.getItem("alx-sb-auth") || "{}").access_token || ""; } catch (e) { }
+          if (token) h.set("Authorization", "Bearer " + token);
+          o.headers = h;
           return orig(base + "/" + url.replace(RE, ""), o);
         }
       } catch (e) {}
