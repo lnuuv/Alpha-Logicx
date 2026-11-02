@@ -27,7 +27,7 @@
       return orig(input, init);
     };
   }
-  var base = (window.ALX_API_BASE || (location.protocol.indexOf("http") === 0 ? location.origin : "")) + "/api/gemini";
+  var base = (window.ALX_API_BASE || (location.protocol.indexOf("http") === 0 ? location.origin : "")) + "/api/gemini/v1beta";
   window.GEMINI_API_KEY = "server-managed"; /* قيمة شكلية فقط حتى لا تطلب الواجهة مفتاحاً */
   try { ["gemini-key", "u1.geminiKey"].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {}
   install(window, base);
