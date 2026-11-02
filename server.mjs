@@ -1,5 +1,6 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
+import {brotliCompress,constants} from 'node:zlib';
 const root = new URL('./', import.meta.url);
 const env = process.env;
 const url = (env.SUPABASE_URL || '').replace(/\/$/, '');
@@ -7,7 +8,11 @@ const key = env.SUPABASE_PUBLISHABLE_KEY || '';
 if (key.startsWith('sb_secret_')) throw new Error('Use a Supabase publishable key, never a secret key');
 if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)) throw new Error('Invalid SUPABASE_URL');
 const limits = new Map();
-setInterval(() => { const now=Date.now(); for(const [id,v] of limits) if(now-v.at>60000) limits.delete(id); },60000).unref();
+const sessions = new Map(); // نتيجة التحقق من الجلسة تُحفظ 60 ثانية لتسريع كل طلب AI
+const cache = new Map(); // ملفات الموقع في الذاكرة + نسخة brotli
+setInterval(() => { const now=Date.now(); for(const [id,v] of limits) if(now-v.at>60000) limits.delete(id); for(const [t,v] of sessions) if(v.until<now) sessions.delete(t); },60000).unref();
+const prep = async name => { const raw=await readFile(new URL(name,root)); const c={raw}; cache.set(name,c); if(/\.(html|js)$/.test(name)) brotliCompress(raw,{params:{[constants.BROTLI_PARAM_QUALITY]:5}},(e,b)=>{ if(!e) c.br=b; }); return c; };
+prep('index.html').catch(()=>{});
 const json = (res,status,data) => {res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const fail = (res,status,message) => json(res,status,{error:{message}});
 http.createServer(async (req,res) => {
@@ -23,11 +28,16 @@ http.createServer(async (req,res) => {
     const path=u.pathname.slice('/api/gemini'.length);
     if(!((req.method==='POST' && /^\/v1beta\/models\/[a-zA-Z0-9._-]+:generateContent$/.test(path)) || (req.method==='GET' && path==='/v1beta/models'))) return fail(res,404,'Unknown API route');
     if(!/^Bearer [a-zA-Z0-9._-]+$/.test(req.headers.authorization||'')) return fail(res,401,'سجّل الدخول بحساب المنصة لاستخدام الذكاء الاصطناعي.');
-    const auth=await fetch(url+'/auth/v1/user',{headers:{apikey:key,Authorization:req.headers.authorization},signal:AbortSignal.timeout(10000)});
-    if(!auth.ok) return fail(res,401,'انتهت الجلسة؛ سجّل الدخول مجددًا.');
-    const user=await auth.json();
-    const profiles=await fetch(url+'/rest/v1/profiles?id=eq.'+encodeURIComponent(user.id)+'&select=active',{headers:{apikey:key,Authorization:req.headers.authorization},signal:AbortSignal.timeout(10000)});
-    if(!profiles.ok || !(await profiles.json()).some(p=>p.active)) return fail(res,403,'الحساب غير مفعّل.');
+    const az=req.headers.authorization; let sess=sessions.get(az);
+    if(!sess || sess.until<Date.now()) {
+      const auth=await fetch(url+'/auth/v1/user',{headers:{apikey:key,Authorization:az},signal:AbortSignal.timeout(10000)});
+      if(!auth.ok) return fail(res,401,'انتهت الجلسة؛ سجّل الدخول مجددًا.');
+      const user=await auth.json();
+      const profiles=await fetch(url+'/rest/v1/profiles?id=eq.'+encodeURIComponent(user.id)+'&select=active',{headers:{apikey:key,Authorization:az},signal:AbortSignal.timeout(10000)});
+      if(!profiles.ok || !(await profiles.json()).some(p=>p.active)) return fail(res,403,'الحساب غير مفعّل.');
+      sess={id:user.id,until:Date.now()+60000}; sessions.set(az,sess);
+    }
+    const user={id:sess.id};
     let count=limits.get(user.id); if(!count || Date.now()-count.at>60000) {count={at:Date.now(),n:0};limits.set(user.id,count);}
     if(++count.n>30) return fail(res,429,'طلبات كثيرة؛ انتظر دقيقة.');
     let body; if(req.method==='POST') { const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>2*1024*1024){fail(res,413,'الطلب كبير جدًا.');return;}chunks.push(chunk);}body=Buffer.concat(chunks);try{JSON.parse(body.toString());}catch{return fail(res,400,'Invalid JSON');} }
@@ -36,8 +46,8 @@ http.createServer(async (req,res) => {
   }
   const files={'/':'index.html','/index.html':'index.html','/render-client.js':'render-client.js','/alpha-ax.png':'alpha-ax.png'};
   if(req.method!=='GET' || !files[u.pathname]) return fail(res,404,'Not found');
-  const data=await readFile(new URL(files[u.pathname],root));
+  const c=cache.get(files[u.pathname])||await prep(files[u.pathname]);
   const type=u.pathname.endsWith('.js')?'application/javascript':u.pathname.endsWith('.png')?'image/png':'text/html; charset=utf-8';
-  res.writeHead(200,{'Content-Type':type,'X-Content-Type-Options':'nosniff'});res.end(data);
+  const h={'Content-Type':type,'X-Content-Type-Options':'nosniff','Vary':'Accept-Encoding'};let data=c.raw;if(c.br && /\bbr\b/.test(req.headers['accept-encoding']||'')){h['Content-Encoding']='br';data=c.br;}h['Content-Length']=data.length;res.writeHead(200,h);res.end(data);
  } catch(e) { if(!res.headersSent) fail(res,502,'تعذّر الاتصال بالخدمة. حاول مجددًا.');else res.end(); }
 }).listen(Number(env.PORT||3000),'0.0.0.0');
