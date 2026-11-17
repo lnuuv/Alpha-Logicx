@@ -42077,6 +42077,18 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     /* ===== ترجمات إضافية كاملة: معاني الاختصارات ووظائفها، لوحة «اشرح الصفحة»، ونصوص واجهة كانت بلا ترجمة =====
        المفتاح = النص العربي كما يظهر في الصفحة، القيمة = الترجمة الإنجليزية الكاملة. */
     window.ALX_I18N_EXTRA = {
+      "🎟️ كود الدعوة (من الأستاذ)": "🎟️ Invite code (from your teacher)",
+      "كلمة المرور 8 أحرف على الأقل.": "Password must be at least 8 characters.",
+      "تعذّر إنشاء الحساب: كود الدعوة غير صحيح أو التسجيل مغلق حالياً. اطلب كود الدعوة من الأستاذ.": "Couldn't create the account: the invite code is wrong or sign-up is closed. Ask your teacher for the invite code.",
+      "🎟️ كود الدعوة للتسجيل": "🎟️ Sign-up invite code",
+      "لا يستطيع أحد إنشاء حساب بدون هذا الكود. أعطه لطلابك فقط، وغيّره إذا انتشر. إذا تركته فارغاً يُغلق التسجيل.": "No one can create an account without this code. Give it to your students only and change it if it spreads. Leave it empty to close sign-up.",
+      "🎲 كود جديد": "🎲 New code",
+      "💾 حفظ": "💾 Save",
+      "الكود 6 أحرف على الأقل حتى لا يُخمَّن.": "The code needs at least 6 characters so it can't be guessed.",
+      "تم الحفظ ✔ التسجيل مفتوح لمن معه هذا الكود فقط.": "Saved ✔ Only people with this code can sign up.",
+      "تم الحفظ ✔ التسجيل مغلق الآن.": "Saved ✔ Sign-up is now closed.",
+      "قاعدة البيانات غير مُحدّثة: شغّل ملف security-update.sql في Supabase.": "The database isn't updated yet: run security-update.sql in Supabase.",
+      "هذا النموذج غير مسموح.": "This model isn't allowed.",
       "إعدادات Render غير مكتملة.": "The server settings on Render are incomplete.",
       "سجّل الدخول بحساب المنصة لاستخدام الذكاء الاصطناعي.": "Sign in with your platform account to use AI.",
       "انتهت الجلسة؛ سجّل الدخول مجددًا.": "Your session has ended; please sign in again.",
@@ -43531,7 +43543,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 --
 --  ينشئ: الحسابات والأدوار (أستاذ/طالب) + الواجبات والمشاريع + الحلول
 --        + الشات + الاجتماعات + الكاردات + تخزين الملفات + صلاحيات الوقت الحقيقي
---  أول من يسجّل باسم المستخدم «yasser» يصبح الأستاذ تلقائياً، وكل من يسجّل بعده طالب.
+--  التسجيل يحتاج «كود دعوة». قبل أول تسجيل ضع كوداً:
+--    update public.app_settings set invite_code = 'اكتب-الكود' where id = 1;
+--  كل من يسجّل يكون طالباً. بعد أن تسجّل حسابك اجعله أستاذاً:
+--    update public.profiles set role = 'teacher' where username = 'اسم_المستخدم';
 -- =====================================================================
 
 -- ---------- 1) الجداول ----------
@@ -43623,23 +43638,26 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and active);
 $$;
 
--- إنشاء الملف الشخصي تلقائياً عند التسجيل: yasser = أستاذ (إن لم يوجد أستاذ)، والباقي طلاب
+-- إنشاء الملف الشخصي عند التسجيل: كود الدعوة إلزامي، والجميع طلاب
+-- (لإنشاء حساب يدوياً من لوحة Supabase: ضع كوداً مؤقتاً ثم سجّل من الموقع نفسه)
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
-  u text := lower(coalesce(nullif(new.raw_user_meta_data ->> 'username', ''), split_part(new.email, '@', 1)));
-  r text := 'student';
+  u    text := lower(coalesce(nullif(new.raw_user_meta_data ->> 'username', ''), split_part(new.email, '@', 1)));
+  code text;
 begin
-  if u = 'yasser' and not exists (select 1 from public.profiles where role = 'teacher') then
-    r := 'teacher';
+  select lower(trim(invite_code)) into code from public.app_settings where id = 1;
+  if coalesce(code, '') = '' or lower(trim(coalesce(new.raw_user_meta_data ->> 'invite', ''))) <> code then
+    raise exception 'ALX_INVITE: كود الدعوة غير صحيح أو التسجيل مغلق';
   end if;
   insert into public.profiles (id, username, name, avatar, role)
   values (new.id, u,
-          left(coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), case when r = 'teacher' then 'الأستاذ ياسر' else u end), 40),
+          left(coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), u), 40),
           left(coalesce(new.raw_user_meta_data ->> 'avatar', ''), 16),
-          r);
+          'student');
   return new;
 end $$;
+
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
@@ -43727,6 +43745,25 @@ language sql stable security definer set search_path = public as $$
   where p.role = 'student'
   group by p.id;
 $$;
+
+-- ---------- كود الدعوة (إعدادات المنصة) ----------
+create table if not exists public.app_settings (
+  id          smallint primary key default 1 check (id = 1),
+  invite_code text not null default '' check (char_length(invite_code) <= 40),
+  updated_at  timestamptz not null default now()
+);
+insert into public.app_settings (id) values (1) on conflict (id) do nothing;
+
+alter table public.app_settings enable row level security;
+revoke all on public.app_settings from anon, authenticated;
+grant select, update (invite_code, updated_at) on public.app_settings to authenticated;
+
+drop policy if exists "settings teacher read" on public.app_settings;
+create policy "settings teacher read" on public.app_settings for select to authenticated using (public.is_teacher());
+drop policy if exists "settings teacher update" on public.app_settings;
+create policy "settings teacher update" on public.app_settings for update to authenticated
+  using (public.is_teacher()) with check (public.is_teacher());
+
 
 -- ---------- 3) الصلاحيات (Row Level Security) ----------
 alter table public.profiles    enable row level security;
@@ -43844,12 +43881,42 @@ begin
   end loop;
 end $$;
 
--- قنوات الاجتماعات والمكالمات للمسجّلين فقط، وأوامر التحكم (ctl:) للأستاذ فقط
+-- القنوات المباشرة: كل قناة لأصحابها فقط (المكالمة الخاصة لطرفيها، الرنين لصاحبه، غرف الصوت لأعضاء السيرفر)
+create or replace function public.alx_topic_ok(t text, writing boolean) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare
+  me   text := auth.uid()::text;
+  rest text;
+  ok   boolean := false;
+begin
+  if me is null or t is null or not public.is_active() then return false; end if;
+  if t = 'alx-lobby' or t like 'meet:%' then return true; end if;
+  if t like 'ctl:%' then return (not writing) or public.is_teacher(); end if;
+  if t like 'inbox:%' then return writing or t = 'inbox:' || me; end if;
+  if t like 'call:%' then
+    rest := substr(t, 6);
+    return me = split_part(rest, '_', 1) or me = split_part(rest, '_', 2);
+  end if;
+  if t like 'vc:%' or t like 'vcw:%' then
+    begin
+      execute 'select exists (select 1 from public.channels c join public.server_members m on m.server_id = c.server_id
+                              where c.id = public.try_uuid($1) and m.uid = auth.uid())'
+        into ok using split_part(t, ':', 2);
+    exception when others then ok := false;
+    end;
+    return coalesce(ok, false);
+  end if;
+  return false;
+end $$;
+grant execute on function public.alx_topic_ok(text, boolean) to authenticated;
+
 drop policy if exists "alx realtime read" on realtime.messages;
-create policy "alx realtime read" on realtime.messages for select to authenticated using (true);
+create policy "alx realtime read" on realtime.messages for select to authenticated
+  using (public.alx_topic_ok(realtime.topic(), false));
 drop policy if exists "alx realtime write" on realtime.messages;
 create policy "alx realtime write" on realtime.messages for insert to authenticated
-  with check (realtime.topic() not like 'ctl:%' or public.is_teacher());
+  with check (public.alx_topic_ok(realtime.topic(), true));
+
 
 -- =====================================================================
 --  أوامر مفيدة لاحقاً (شغّلها عند الحاجة فقط):
@@ -43952,6 +44019,18 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         w.leave = function () {if (closed) return; if (o.key) bc.postMessage({_p: "bye", key: o.key}); closed = true; clearInterval(iv); bc.close(); return Promise.resolve();};
         return w;
       }
+      /* إرسال رسالة لقناة دون الاشتراك فيها (مثل صندوق رنين مستخدم آخر) */
+      function sbSendTo(sb, topic, e, d) {
+        var p = Object.assign({}, d || {}); p.e = e;
+        var ch = sb.channel(topic, {config: {private: true}});
+        var done = function () {try {sb.removeChannel(ch);} catch (x) { } };
+        if (typeof ch.httpSend !== "function") {done(); return Promise.resolve(false);}
+        return ch.httpSend("m", p).then(function () {done(); return true;}, function () {done(); return false;});
+      }
+      function bcSendTo(topic, e, d) {
+        try {var bc = new BroadcastChannel("alx-rt:" + topic), p = Object.assign({}, d || {}); p.e = e; bc.postMessage(p); bc.close();} catch (x) { }
+        return Promise.resolve(true);
+      }
       function sbJoin(sb, topic, o) {
         var ch = null, closed = false, w = {state: o.state || null, priv: o.priv !== false};
         async function drop(c) {try {await sb.removeChannel(c);} catch (e) { } try {if (sb.realtime && sb.realtime._remove && sb.getChannels().indexOf(c) >= 0) sb.realtime._remove(c);} catch (e) { } }
@@ -43964,9 +44043,12 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
             ch.subscribe(function (st, err) {
               if (closed) return;
               if (st === "SUBSCRIBED") {if (o.key && w.state) ch.track(w.state); res(true);}
-              else if (st === "CHANNEL_ERROR" && priv && /unauthori|permission|denied|not allowed/i.test(String((err && err.message) || err || ""))) {
+              /* القنوات العامة تتجاوز قواعد الحماية: نسمح بالرجوع إليها لقنوات الصف العامة فقط (الحضور والاجتماعات)،
+                 ولا نسمح أبداً للمكالمات الخاصة وصناديق الرنين وغرف الصوت */
+              else if (st === "CHANNEL_ERROR" && priv && /^(alx-lobby|meet:|ctl:)/.test(topic) && /unauthori|permission|denied|not allowed/i.test(String((err && err.message) || err || ""))) {
                 var old = ch; drop(old).then(function () {if (!closed) make(false);});
               }
+              else if (st === "CHANNEL_ERROR" || st === "TIMED_OUT") res(false);
             });
           }
           make(w.priv);
@@ -44109,6 +44191,7 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         api.onChange = function (cb) {listeners.push(cb);};
         api.live = function () { }; api.stopLive = function () { };
         api.join = function (topic, o) {return bcJoin(topic, o);};
+        api.sendTo = function (topic, e, d) {return bcSendTo(topic, e, d);};
         return api;
       }
 
@@ -44160,9 +44243,6 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
           if (r.error) {
             var m = String(r.error.message || "") + " " + String(r.error.code || "");
             if (/not confirmed/i.test(m)) throw Err("الحساب غير مفعّل: عطّل خيار «Confirm email» في إعدادات Supabase ثم أنشئ الحساب من جديد.");
-            if (u === "yasser" && p === "123" && /invalid/i.test(m)) {
-              try {return await api.signUp(u, p, "الأستاذ ياسر");} catch (e) {if (!/محجوز/.test(e.message)) throw e;}
-            }
             if (/invalid/i.test(m)) throw Err("اسم المستخدم أو كلمة المرور غير صحيحة.");
             if (/rate|too many|429/i.test(m)) throw Err("محاولات كثيرة، انتظر قليلاً ثم حاول.");
             throw cloudErr(r.error);
@@ -44171,13 +44251,13 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
           if (!cur.active) {await sb.auth.signOut(); cur = null; throw Err("تم إيقاف هذا الحساب. راجع الأستاذ.");}
           return cur;
         };
-        api.signUp = async function (u, p, name) {
-          var r = await sb.auth.signUp({email: email(u), password: pw(p), options: {data: {username: u, name: name}}});
+        api.signUp = async function (u, p, name, invite) {
+          var r = await sb.auth.signUp({email: email(u), password: pw(p), options: {data: {username: u, name: name, invite: String(invite || "").trim()}}});
           if (r.error) {
             var m = String(r.error.message || "") + " " + String(r.error.code || "");
             if (/already|exists|registered/i.test(m)) throw Err("اسم المستخدم محجوز، اختر اسماً آخر.");
             if (/email.*invalid|email_address_invalid|not authorized/i.test(m)) throw Err("عطّل خيار «Confirm email» في Supabase (Authentication → Sign In / Providers → Email) ثم حاول مجدداً.");
-            if (/Database error/i.test(m)) throw Err("تعذّر إنشاء الحساب: تأكد من تشغيل ملف SQL، وأن اسم المستخدم بأحرف إنجليزية.");
+            if (/Database error/i.test(m)) throw Err("تعذّر إنشاء الحساب: كود الدعوة غير صحيح أو التسجيل مغلق حالياً. اطلب كود الدعوة من الأستاذ.");
             if (/rate|too many|429/i.test(m)) throw Err("محاولات تسجيل كثيرة من نفس الشبكة. انتظر قليلاً، أو ارفع الحد من Supabase → Authentication → Rate Limits.");
             if (/password/i.test(m)) throw Err("كلمة المرور لا تطابق شروط Supabase: " + r.error.message);
             throw cloudErr(r.error);
@@ -44229,6 +44309,16 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         };
         api.stopLive = function () {if (dbch) {sb.removeChannel(dbch); dbch = null;} };
         api.join = function (topic, o) {return sbJoin(sb, topic, o);};
+        api.sendTo = function (topic, e, d) {return sbSendTo(sb, topic, e, d);};
+        api.getInvite = async function () {
+          var r = await sb.from("app_settings").select("invite_code").eq("id", 1).maybeSingle();
+          if (r.error) throw cloudErr(r.error); return (r.data && r.data.invite_code) || "";
+        };
+        api.setInvite = async function (code) {
+          var r = await sb.from("app_settings").update({invite_code: code, updated_at: new Date().toISOString()}).eq("id", 1).select("invite_code");
+          if (r.error) throw cloudErr(r.error);
+          if (!r.data || !r.data.length) throw Err("قاعدة البيانات غير مُحدّثة: شغّل ملف security-update.sql في Supabase.");
+        };
         return api;
       }
 
@@ -44344,6 +44434,7 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
           '<div class="pf-hint" id="su-uh">أحرف إنجليزية صغيرة وأرقام و . _ - (من 2 إلى 20)</div>' +
           '<label class="pf-field"><span>🔒 كلمة المرور</span><input class="pf-input" id="su-p" type="password" autocomplete="new-password"></label>' +
           '<label class="pf-field"><span>🔁 تأكيد كلمة المرور</span><input class="pf-input" id="su-p2" type="password" autocomplete="new-password"></label>' +
+          (api && api.kind === "cloud" ? '<label class="pf-field"><span>🎟️ كود الدعوة (من الأستاذ)</span><input class="pf-input" id="su-c" dir="ltr" maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false"></label>' : "") +
           '<button class="pf-btn block" id="pf-go">✨ إنشاء الحساب</button></form>' +
           '<div class="pf-alt">لديك حساب؟ <button type="button" class="pf-link" id="pf-to-li">🔑 سجّل الدخول</button></div>' + modeLine());
         $("#pf-to-li").onclick = function () {viewLogin();};
@@ -44353,10 +44444,11 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
           var n = $("#su-n").value.trim(), u = $("#su-u").value.trim().toLowerCase(), p = $("#su-p").value, p2 = $("#su-p2").value, m = $("#pf-gmsg"), btn = $("#pf-go");
           if (n.length < 2) return (m.innerHTML = msg("err", "اكتب اسمك الظاهر (حرفان على الأقل)."));
           if (!USER_RE.test(u)) return (m.innerHTML = msg("err", "اسم المستخدم: أحرف إنجليزية صغيرة وأرقام و . _ - فقط (2–20)."));
-          if (p.length < 3) return (m.innerHTML = msg("err", "كلمة المرور 3 أحرف على الأقل (يُفضّل 8 أو أكثر)."));
+          if (p.length < 8) return (m.innerHTML = msg("err", "كلمة المرور 8 أحرف على الأقل."));
           if (p !== p2) return (m.innerHTML = msg("err", "كلمتا المرور غير متطابقتين."));
+          var code = $("#su-c") ? $("#su-c").value.trim() : "";
           busyBtn(btn, true, "⏳ جارٍ إنشاء الحساب…");
-          try {var x = await api.signUp(u, p, n); toast("🎉 تم إنشاء حسابك! اختر شخصيتك", "ok"); start(x);}
+          try {var x = await api.signUp(u, p, n, code); toast("🎉 تم إنشاء حسابك! اختر شخصيتك", "ok"); start(x);}
           catch (er) {m.innerHTML = msg("err", errText(er)); busyBtn(btn, false);}
         };
       }
@@ -44512,7 +44604,7 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
           (me.username === "yasser" ? '<div class="pf-msg info">💡 كلمة المرور الافتراضية للأستاذ «123» ضعيفة ومعروفة — غيّرها بعد أول دخول.</div>' : "") + '<button class="pf-btn" id="np-go">حفظ كلمة المرور</button></div>';
         $("#np-go").onclick = async function () {
           var a = $("#np1").value, b = $("#np2").value, m = $("#pf-m"), btn = this;
-          if (a.length < 3) return (m.innerHTML = msg("err", "3 أحرف على الأقل (يُفضّل 8 أو أكثر)."));
+          if (a.length < 8) return (m.innerHTML = msg("err", "كلمة المرور 8 أحرف على الأقل."));
           if (a !== b) return (m.innerHTML = msg("err", "كلمتا المرور غير متطابقتين."));
           busyBtn(btn, true);
           try {await api.changePassword(a); m.innerHTML = msg("ok", "تم تغيير كلمة المرور ✔"); $("#np1").value = $("#np2").value = "";} catch (e) {m.innerHTML = msg("err", errText(e));}
@@ -44653,8 +44745,26 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         var on = window.ALXMeet ? window.ALXMeet.onlineIds() : {};
         api.leaderboard().then(function (lb) {C.lb = lb; if (curView === "members") fillMembers();}).catch(function () { });
         R().innerHTML = head("الأعضاء والصلاحيات") + '<div class="pf-row" style="margin-bottom:12px"><input class="pf-input" id="mb-q" placeholder="🔎 بحث بالاسم أو اسم المستخدم" style="flex:1;min-width:200px"><span class="pf-badge">🧑‍🏫 ' + C.profiles.filter(function (p) {return p.role === "teacher";}).length + '</span><span class="pf-badge">🎓 ' + C.profiles.filter(function (p) {return p.role === "student";}).length + '</span><span class="pf-badge ok-b">🟢 ' + Object.keys(on).length + ' متصل</span></div><div class="pf-list" id="mb-l"></div>' +
-          '<div class="pf-msg info pf-sec">💡 كل من ينشئ حساباً يكون طالباً. يمكنك ترقية أي حساب إلى أستاذ أو إيقافه مؤقتاً. حذف الحساب نهائياً من Supabase → Authentication → Users.</div>';
+          '<div class="pf-msg info pf-sec">💡 كل من ينشئ حساباً يكون طالباً. يمكنك ترقية أي حساب إلى أستاذ أو إيقافه مؤقتاً. حذف الحساب نهائياً من Supabase → Authentication → Users.</div>' +
+          (api.getInvite ? '<div class="pf-card pf-sec" id="inv-box"><b>🎟️ كود الدعوة للتسجيل</b><div class="pf-muted" style="margin:4px 0 10px">لا يستطيع أحد إنشاء حساب بدون هذا الكود. أعطه لطلابك فقط، وغيّره إذا انتشر. إذا تركته فارغاً يُغلق التسجيل.</div>' +
+            '<div class="pf-row"><input class="pf-input" id="inv-c" dir="ltr" maxlength="40" autocomplete="off" style="flex:1;min-width:160px" placeholder="…"><button class="pf-btn ghost sm" type="button" id="inv-g">🎲 كود جديد</button><button class="pf-btn sm" type="button" id="inv-s">💾 حفظ</button></div><div id="inv-m"></div></div>' : "");
         $("#mb-q").value = memQ; $("#mb-q").oninput = function () {memQ = this.value; fillMembers();};
+        if (api.getInvite) {
+          api.getInvite().then(function (c) {var i = $("#inv-c"); if (i) i.value = c;}).catch(function (e) {var m = $("#inv-m"); if (m) m.innerHTML = msg("err", errText(e));});
+          $("#inv-g").onclick = function () {
+            var A = "abcdefghjkmnpqrstuvwxyz23456789", r = new Uint32Array(8), out = "";
+            crypto.getRandomValues(r); for (var i = 0; i < 8; i++) out += A[r[i] % A.length];
+            $("#inv-c").value = out.slice(0, 4) + "-" + out.slice(4);
+          };
+          $("#inv-s").onclick = async function () {
+            var c = $("#inv-c").value.trim(), btn = this;
+            if (c && c.length < 6) {$("#inv-m").innerHTML = msg("err", "الكود 6 أحرف على الأقل حتى لا يُخمَّن."); return;}
+            busyBtn(btn, true);
+            try {await api.setInvite(c); $("#inv-m").innerHTML = msg("ok", c ? "تم الحفظ ✔ التسجيل مفتوح لمن معه هذا الكود فقط." : "تم الحفظ ✔ التسجيل مغلق الآن.");}
+            catch (e) {$("#inv-m").innerHTML = msg("err", errText(e));}
+            busyBtn(btn, false);
+          };
+        }
         fillMembers();
       };
       function fillMembers() {
@@ -44790,7 +44900,18 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
       var AUDIO_C = {echoCancellation: true, noiseSuppression: true, autoGainControl: true};
       var VIDEO_C = {width: {ideal: 640}, height: {ideal: 360}, frameRate: {ideal: 24, max: 30}, facingMode: "user"};
       var REACTS = ["👍", "❤️", "😂", "👏", "🎉", "😮", "🤔", "🙏"];
-      var lobby = null, online = {}, myPid = null, room = null, ringIn = null, ringOut = null, meetTab = "meetings", actx = null, pre = null;
+      var lobby = null, inbox = null, online = {}, myPid = null, room = null, ringIn = null, ringOut = null, meetTab = "meetings", actx = null, pre = null;
+      /* رنين المكالمات لا يُبث للجميع: يُرسل إلى صندوق المستخدم المقصود فقط (inbox:<uid>)،
+         وغرفة المكالمة اسمها يحمل معرّفي الطرفين فلا تسمح قاعدة البيانات لغيرهما بدخولها */
+      var UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+      var ROOM_RE = new RegExp("^(" + UUID + ")_(" + UUID + ")_[0-9a-z]{6,20}$");
+      function callRoom(a, b) {return [a, b].sort().join("_") + "_" + uid().replace(/-/g, "").slice(0, 12);}
+      function roomHas(r, a, b) {var m = ROOM_RE.exec(String(r || "")); return !!m && [m[1], m[2]].indexOf(a) >= 0 && [m[1], m[2]].indexOf(b) >= 0 && a !== b;}
+      function ring(toUid, e, d) {
+        if (!api || !toUid) return;
+        d = Object.assign({}, d || {}); d.from = myPid;
+        if (api.sendTo) api.sendTo("inbox:" + toUid, e, d);
+      }
       var canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
       function AC() {try {if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume();} catch (e) {actx = null;} return actx;}
       var mmss = function (s) {s = Math.max(0, Math.floor(s)); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ":" : "") + ("0" + m).slice(-2) + ":" + ("0" + x).slice(-2);};
@@ -44801,12 +44922,14 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
       function goOnline(m) {
         if (lobby || !api) return;
         myPid = "u" + m.id.replace(/-/g, "").slice(0, 8) + uid().replace(/-/g, "").slice(0, 6);
-        lobby = api.join("alx-lobby", {key: myPid, uid: m.id, state: lobbyState(), onMsg: onLobby, onPresence: onLobbyPresence});
+        lobby = api.join("alx-lobby", {key: myPid, uid: m.id, state: lobbyState(), onPresence: onLobbyPresence});
+        inbox = api.join("inbox:" + m.id, {key: myPid, uid: m.id, onMsg: onLobby});
       }
       async function goOffline() {
         if (room) await leaveRoom(null, true);
         stopRing(); if (ringOut) endOut(null);
         if (lobby) {var l = lobby; lobby = null; await l.leave();}
+        if (inbox) {var ib = inbox; inbox = null; await ib.leave();}
         online = {};
       }
       function setBusy() {if (lobby && me) lobby.track(lobbyState());}
@@ -44822,7 +44945,9 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
       function onLobby(e, d) {
         if (!me) return;
         if (e === "ring") {
-          if (room || ringIn || ringOut) return lobby.send("ring-no", {to: d.from, room: d.room, why: "busy"});
+          var cu = d.caller && d.caller.uid;
+          if (!cu || !roomHas(d.room, me.id, cu)) return;          /* رنين غير صالح أو ليس لي */
+          if (room || ringIn || ringOut) return ring(cu, "ring-no", {to: d.from, room: d.room, why: "busy"});
           showRingIn(d);
         } else if (e === "ring-x") {
           if (ringIn && ringIn.room === d.room) {var r = ringIn; stopRing(); if (!d.taken) {logCall({uid: r.caller.uid, kind: r.kind, dir: "missed"}); toast("📵 مكالمة فائتة من " + r.caller.name, "info", {label: "معاودة الاتصال", fn: function () {call(r.caller.uid, r.kind);}});} }
@@ -44839,32 +44964,35 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         if (!lobby) return toast("غير متصل بخادم المكالمات.", "err");
         if (!isOnline(id)) return toast((p.name || p.username) + " غير متصل الآن.", "info");
         if (isBusy(id)) return toast((p.name || p.username) + " في مكالمة أخرى الآن.", "info");
-        var rid = uid();
+        var rid = callRoom(me.id, id);
         ringOut = {room: rid, uid: id, kind: kind, name: p.name || p.username, av: p.avatar || "🙂"};
-        lobby.send("ring", {to: id, room: rid, kind: kind, caller: {uid: me.id, name: me.name, av: me.avatar || "🙂"}});
+        ring(id, "ring", {to: id, room: rid, kind: kind, caller: {uid: me.id, name: me.name, av: me.avatar || "🙂"}});
         setBusy();
         var box = el('<div class="mt-ring out" id="mt-out" data-no-i18n><div class="mt-ring-av">' + esc(ringOut.av) + '</div><div class="mt-ring-t"><b>' + esc(ringOut.name) + '</b><span>' + (kind === "video" ? "🎥 مكالمة فيديو" : "📞 مكالمة صوتية") + ' · جارٍ الاتصال…</span></div><button class="mt-rb no" type="button" title="إنهاء">✕</button></div>');
-        box.querySelector(".no").onclick = function () {var o = ringOut; if (!o) return; lobby.send("ring-x", {to: o.uid, room: o.room}); endOut(); logCall({uid: o.uid, kind: o.kind, dir: "out", dur: 0, note: "cancel"});};
+        box.querySelector(".no").onclick = function () {var o = ringOut; if (!o) return; ring(o.uid, "ring-x", {to: o.uid, room: o.room}); endOut(); logCall({uid: o.uid, kind: o.kind, dir: "out", dur: 0, note: "cancel"});};
         document.body.appendChild(box);
-        ringOut.timer = setTimeout(function () {var o = ringOut; if (!o) return; lobby.send("ring-x", {to: o.uid, room: o.room}); endOut(); logCall({uid: o.uid, kind: o.kind, dir: "out", dur: 0, note: "noanswer"}); toast("📵 لم يرد " + o.name, "info");}, 35000);
+        ringOut.timer = setTimeout(function () {var o = ringOut; if (!o) return; ring(o.uid, "ring-x", {to: o.uid, room: o.room}); endOut(); logCall({uid: o.uid, kind: o.kind, dir: "out", dur: 0, note: "noanswer"}); toast("📵 لم يرد " + o.name, "info");}, 35000);
         tone("back");
       }
       function endOut() {if (!ringOut) return; clearTimeout(ringOut.timer); ringOut = null; var b = $("#mt-out"); if (b) b.remove(); tone(null); setBusy();}
       function showRingIn(d) {
-        ringIn = {room: d.room, kind: d.kind, caller: d.caller || {}, from: d.from};
-        var c = ringIn.caller, v = d.kind === "video";
+        /* اسم المتصل وصورته من سجل الحسابات، لا مما يرسله المتصل (منع انتحال الاسم) */
+        var known = P(d.caller.uid);
+        if (!known || known.active === false) return;
+        ringIn = {room: d.room, kind: d.kind === "video" ? "video" : "audio", caller: {uid: known.id, name: known.name || known.username, av: known.avatar || "🙂"}, from: d.from};
+        var c = ringIn.caller, v = ringIn.kind === "video";
         var box = el('<div class="mt-ring in" id="mt-in" data-no-i18n><div class="mt-ring-av">' + esc(c.av || "🙂") + '</div><div class="mt-ring-t"><b>' + esc(c.name || "مستخدم") + '</b><span>' + (v ? "🎥 يتصل بك (فيديو)" : "📞 يتصل بك (صوت)") + '</span></div>' +
           (v ? '<button class="mt-rb ok" type="button" data-a="video" title="رد بالفيديو">🎥</button>' : "") + '<button class="mt-rb ok" type="button" data-a="audio" title="رد بالصوت">📞</button><button class="mt-rb no" type="button" data-a="no" title="رفض">✕</button></div>');
         box.onclick = function (ev) {
           var b = ev.target.closest("[data-a]"); if (!b || !ringIn) return;
           var r = ringIn; stopRing();
-          if (b.dataset.a === "no") {lobby.send("ring-no", {to: r.from, room: r.room, why: "decline"}); logCall({uid: r.caller.uid, kind: r.kind, dir: "in", dur: 0, note: "declined"}); return;}
-          lobby.send("ring-ok", {to: r.from, room: r.room});
-          lobby.send("ring-x", {to: me.id, room: r.room, taken: true});
+          if (b.dataset.a === "no") {ring(r.caller.uid, "ring-no", {to: r.from, room: r.room, why: "decline"}); logCall({uid: r.caller.uid, kind: r.kind, dir: "in", dur: 0, note: "declined"}); return;}
+          ring(r.caller.uid, "ring-ok", {to: r.from, room: r.room});
+          ring(me.id, "ring-x", {to: me.id, room: r.room, taken: true});
           startRoom({topic: "call:" + r.room, id: r.room, title: "مكالمة مع " + (r.caller.name || ""), kind: b.dataset.a === "video" ? "video" : "audio", call: true, other: r.caller.uid, dir: "in"}, null);
         };
         document.body.appendChild(box);
-        ringIn.timer = setTimeout(function () {if (ringIn && ringIn.room === d.room) {var r = ringIn; stopRing(); logCall({uid: r.caller.uid, kind: r.kind, dir: "missed"}); lobby.send("ring-no", {to: r.from, room: r.room, why: "noanswer"});} }, 36000);
+        ringIn.timer = setTimeout(function () {if (ringIn && ringIn.room === d.room) {var r = ringIn; stopRing(); logCall({uid: r.caller.uid, kind: r.kind, dir: "missed"}); ring(r.caller.uid, "ring-no", {to: r.from, room: r.room, why: "noanswer"});} }, 36000);
         tone("ring");
         try {if (navigator.vibrate) navigator.vibrate([400, 200, 400]);} catch (e) { }
         try {if (document.hidden && window.Notification && Notification.permission === "granted") {var n = new Notification("📞 مكالمة واردة — Alpha LogicX", {body: (c.name || "") + (v ? " يتصل بك بالفيديو" : " يتصل بك"), tag: "alx-call"}); n.onclick = function () {window.focus(); n.close();};} } catch (e) { }
@@ -45340,7 +45468,7 @@ create policy "alx realtime write" on realtime.messages for insert to authentica
         if (me && r.opt.meetingId) refresh(["meetings"]).then(function () {if (curView === "meet" || curView === "home") nav(curView, curArg);});
         else if (curView === "meet") nav("meet");
       }
-      window.addEventListener("beforeunload", function () {if (room) {try {room.ch.send("bye", {});} catch (e) { } } if (ringOut && lobby) lobby.send("ring-x", {to: ringOut.uid, room: ringOut.room});});
+      window.addEventListener("beforeunload", function () {if (room) {try {room.ch.send("bye", {});} catch (e) { } } if (ringOut) ring(ringOut.uid, "ring-x", {to: ringOut.uid, room: ringOut.room});});
 
       /* ---------- بدء/الانضمام لاجتماع الصف ---------- */
       async function joinMeeting(id) {
@@ -52357,6 +52485,26 @@ begin
     end;
   end loop;
 end $$;
+
+-- ---------- 4) روابط الصور: من مخزن الموقع فقط (لا روابط خارجية تكشف عناوين IP للزوار) ----------
+do $$
+begin
+  alter table public.profiles drop constraint if exists alx_avatar_own;
+  alter table public.profiles add constraint alx_avatar_own check
+    (avatar_url = '' or avatar_url ~ '^https://[a-z0-9-]+\.supabase\.co/storage/v1/object/public/alx-media/') not valid;
+  alter table public.profiles drop constraint if exists alx_banner_own;
+  alter table public.profiles add constraint alx_banner_own check
+    (banner_url = '' or banner_url ~ '^https://[a-z0-9-]+\.supabase\.co/storage/v1/object/public/alx-media/') not valid;
+exception when undefined_column or undefined_table then null;
+end $$;
+do $$
+begin
+  alter table public.servers drop constraint if exists alx_icon_own;
+  alter table public.servers add constraint alx_icon_own check
+    (icon_url = '' or icon_url ~ '^https://[a-z0-9-]+\.supabase\.co/storage/v1/object/public/alx-media/') not valid;
+exception when undefined_column or undefined_table then null;
+end $$;
+
 
 -- =====================================================================
 --  تم. حدّث الموقع (F5) وستظهر: 💬 الرسائل الخاصة، 🛰️ السيرفرات، 👥 المستخدمون.
